@@ -29,7 +29,23 @@ from utils.openai_utils import (
     parse_openai_json_results,
     get_openai_image_part_from_path,
 )
+from utils.anthropic_utils import (
+    call_anthropic_models_with_text_prompt,
+    call_anthropic_models_with_content,
+    parse_anthropic_json_results,
+    get_anthropic_image_part_from_path,
+    get_anthropic_pdf_part_from_path,
+)
 from utils.pdf_utils import load_paper
+
+
+def _is_openai_model(model_name: str) -> bool:
+    name = model_name.lower()
+    return "gpt" in name or "o1" in name or "o3" in name
+
+
+def _is_anthropic_model(model_name: str) -> bool:
+    return "claude" in model_name.lower()
 
 
 def identity_parse(response: str):
@@ -40,12 +56,10 @@ def get_llm_parser(model_name: str, return_json: bool = True) -> Callable:
     if not return_json:
         return identity_parse
 
-    if (
-        "gpt" in model_name.lower()
-        or "o1" in model_name.lower()
-        or "o3" in model_name.lower()
-    ):
+    if _is_openai_model(model_name):
         return parse_openai_json_results
+    elif _is_anthropic_model(model_name):
+        return parse_anthropic_json_results
     else:
         return parse_gemini_json_results
 
@@ -70,11 +84,7 @@ def call_llm_with_text_prompt(
     if generation_configs is None:
         generation_configs = {}
 
-    if (
-        "gpt" in model_name.lower()
-        or "o1" in model_name.lower()
-        or "o3" in model_name.lower()
-    ):
+    if _is_openai_model(model_name):
         system_prompt = None
         configs_for_openai = dict(generation_configs) if generation_configs else {}
         if "system_instruction" in configs_for_openai:
@@ -86,6 +96,21 @@ def call_llm_with_text_prompt(
             prompt=prompt,
             model_name=model_name,
             generation_configs=configs_for_openai,
+            result_parsing_func=parser,
+            check_parsed_response_not_none=check_parsed_response_not_none,
+            system_prompt=system_prompt,
+        )
+        return response_dict
+    elif _is_anthropic_model(model_name):
+        system_prompt = None
+        configs_for_anthropic = dict(generation_configs) if generation_configs else {}
+        if "system_instruction" in configs_for_anthropic:
+            system_prompt = configs_for_anthropic.pop("system_instruction")
+
+        response_dict = call_anthropic_models_with_text_prompt(
+            prompt=prompt,
+            model_name=model_name,
+            generation_configs=configs_for_anthropic,
             result_parsing_func=parser,
             check_parsed_response_not_none=check_parsed_response_not_none,
             system_prompt=system_prompt,
@@ -123,11 +148,7 @@ def call_llm_with_images(
     if generation_configs is None:
         generation_configs = {}
 
-    if (
-        "gpt" in model_name.lower()
-        or "o1" in model_name.lower()
-        or "o3" in model_name.lower()
-    ):
+    if _is_openai_model(model_name):
         system_prompt = None
         # Copy to avoid side-effects on caller's dictionary
         configs_for_openai = dict(generation_configs) if generation_configs else {}
@@ -144,6 +165,25 @@ def call_llm_with_images(
             content=content,
             model_name=model_name,
             generation_configs=configs_for_openai,
+            result_parsing_func=parser,
+            check_parsed_response_not_none=check_parsed_response_not_none,
+            system_prompt=system_prompt,
+        )
+        return response_dict
+    elif _is_anthropic_model(model_name):
+        system_prompt = None
+        configs_for_anthropic = dict(generation_configs) if generation_configs else {}
+        if "system_instruction" in configs_for_anthropic:
+            system_prompt = configs_for_anthropic.pop("system_instruction")
+
+        content = [{"type": "text", "text": prompt}]
+        for image_path in images:
+            content.extend(get_anthropic_image_part_from_path(image_path))
+
+        response_dict = call_anthropic_models_with_content(
+            content=content,
+            model_name=model_name,
+            generation_configs=configs_for_anthropic,
             result_parsing_func=parser,
             check_parsed_response_not_none=check_parsed_response_not_none,
             system_prompt=system_prompt,
@@ -181,17 +221,28 @@ def call_llm_with_pdf(
         else get_llm_parser(model_name, return_json)
     )
 
-    if (
-        "gpt" in model_name.lower()
-        or "o1" in model_name.lower()
-        or "o3" in model_name.lower()
-    ):
+    if _is_openai_model(model_name):
         paper_text = load_paper(pdf_path, min_size=100)
         full_prompt = f"Paper Content:\n{paper_text}\n\nTask:\n{prompt}"
 
         generation_configs = {}
         response_dict = call_openai_models_with_text_prompt(
             prompt=full_prompt,
+            model_name=model_name,
+            generation_configs=generation_configs,
+            result_parsing_func=parser,
+            check_parsed_response_not_none=check_parsed_response_not_none,
+            system_prompt=system_instruction,
+        )
+        return response_dict
+    elif _is_anthropic_model(model_name):
+        content = get_anthropic_pdf_part_from_path(pdf_path) + [
+            {"type": "text", "text": prompt}
+        ]
+        generation_configs = {"temperature": temperature}
+
+        response_dict = call_anthropic_models_with_content(
+            content=content,
             model_name=model_name,
             generation_configs=generation_configs,
             result_parsing_func=parser,

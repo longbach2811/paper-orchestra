@@ -26,6 +26,7 @@ from methods.prompts.literature_review_agent import (
     literature_review_agent_writter_prompt,
 )
 from utils.gemini_utils import call_gemini_with_contents, parse_gemini_latex_results
+from utils.llm_backend_utils import call_llm_with_text_prompt
 from utils.scholar_utils import s2_title_search
 
 
@@ -496,9 +497,10 @@ class HybridLiteratureAgent:
         )
 
         user_prompt = "Generate the LaTeX for Introduction and Related Work sections."
-        response_dict = call_gemini_with_contents(
+        full_prompt = user_prompt + "\n\n" + json.dumps(context_payload)
+        response_dict = call_llm_with_text_prompt(
             model_name=self.model_name,
-            contents=[user_prompt, json.dumps(context_payload)],
+            prompt=full_prompt,
             generation_configs={"system_instruction": writer_system_prompt},
             result_parsing_func=parse_gemini_latex_results,
         )
